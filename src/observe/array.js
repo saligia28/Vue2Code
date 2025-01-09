@@ -11,7 +11,7 @@ methods.forEach((method) => {
     const result = oldArrayProto[method].call(this, ...arg);
 
     let inserted; // 保存传入的修改值
-    let ob = this.__ob__; //获取Observe实例
+    let ob = this.__ob__; // 获取Observe实例
     switch (method) {
       case "push":
       case "unshift":

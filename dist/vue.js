@@ -14,7 +14,7 @@
     newArrayProto[method] = function (...arg) {
       const result = oldArrayProto[method].call(this, ...arg);
       let inserted; // 保存传入的修改值
-      let ob = this.__ob__; //获取Observe实例
+      let ob = this.__ob__; // 获取Observe实例
       switch (method) {
         case "push":
         case "unshift":
@@ -76,8 +76,9 @@
     if (typeof data !== "object" || data === null) {
       return;
     }
+
+    // 如果属性实例上拥有__ob__，说明已经被劫持了，直接返回对应的实例
     if (data.__ob__ instanceof Observe) {
-      // 如果属性实例上拥有__ob__，说明已经被劫持了，直接返回对应的实例
       return data.__ob__;
     }
     return new Observe(data);

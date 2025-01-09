@@ -50,7 +50,8 @@ export function observe(data) {
     return;
   }
 
-  if(data.__ob__ instanceof Observe) {// 如果属性实例上拥有__ob__，说明已经被劫持了，直接返回对应的实例
+  // 如果属性实例上拥有__ob__，说明已经被劫持了，直接返回对应的实例
+  if(data.__ob__ instanceof Observe) {
     return data.__ob__
   }
 

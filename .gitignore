@@ -11,7 +11,7 @@ node_modules
 # dist
 dist-ssr
 stats.html
-index.html
+#index.html
 *.local
 
 # Editor directories and files
