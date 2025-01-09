@@ -4,6 +4,203 @@
   (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.Vue = factory());
 })(this, (function () { 'use strict';
 
+  // 正则图示网站  https://regexper.com/
+
+  const ncname = '[a-zA-Z_][\\w\\-]*'; // 标签名
+  const qnameCapture = `((?:${ncname}\\:)?${ncname})`; // 标签名
+
+  const startTagOpen = new RegExp(`^<${qnameCapture}`); // 开始标签
+  const endTag = new RegExp(`^<\\/${qnameCapture}[^>]*>`); // 结束标签
+  const attribute = /^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/; // 属性
+  const startTagClose = /^\s*(\/?)>/; // 开始标签闭合
+
+  function parseHTML(html) {
+    /**
+     * 通过下面的方法处理模板，生成ast语法树
+     * 列用 栈 的思想去模拟html中dom的父子关系
+     * --栈 中的最后一个元素就是当前元素的父级
+     */
+    // 处理开始标签.
+    const ELEMENT_TYPE = 1;
+    const TEXT_TYPE = 3;
+    let root = null;
+    const stack = []; // 栈
+    let currentParent = null; // 指向的是栈中的最后一个元素
+
+    function createASTElement(tag, attrs) {
+      return {
+        tag,
+        type: ELEMENT_TYPE,
+        children: [],
+        attrs,
+        parent: null
+      };
+    }
+    function start(tag, attrs) {
+      let node = createASTElement(tag, attrs);
+      if (!root) {
+        // 当前不存在根节点，则当前节点为根节点
+        root = node;
+      }
+      if (currentParent) {
+        node.parent = currentParent; // 设置当前节点的父级
+        currentParent.children.push(node); // 将当前节点添加到父级的children
+      }
+      stack.push(node); // 进栈
+      currentParent = node; // 修改currentParent指向
+    }
+
+    // 处理文本
+    function chars(text) {
+      // 直接放入当前currentParent的children
+      text = text.replace(/\s/g, ''); // 去除空格 不做细节处理
+      currentParent.children.push({
+        type: TEXT_TYPE,
+        text,
+        parent: currentParent
+      });
+    }
+
+    // 处理结束标签
+    function end(tag) {
+      // tag可以用来校验当前标签是否合法
+      stack.pop(); // 出栈
+      currentParent = stack[stack.length - 1]; // 修改currentParent
+    }
+
+    // 截取去掉已经匹配过的部分
+    function advance(n) {
+      html = html.substring(n);
+    }
+
+    // 解析开始标签
+    function parseStartTag() {
+      const start = html.match(startTagOpen);
+      if (start) {
+        const match = {
+          tagName: start[1],
+          // 标签名
+          attrs: []
+        };
+        advance(start[0].length);
+        let end, attr;
+        // 如果不是开始标签的结束，就一直匹配下去
+        while (!(end = html.match(startTagClose)) && (attr = html.match(attribute))) {
+          advance(attr[0].length);
+          // 将解析出来的属性添加到attrs
+          match.attrs.push({
+            name: attr[1],
+            value: attr[3] || attr[4] || attr[5] || true
+          });
+        }
+        if (end) {
+          advance(end[0].length);
+        }
+        return match;
+      }
+      return false; // 不是开始标签则直接返回false
+    }
+    while (html) {
+      // textEnd是0，则是标签
+      // textEnd是大于0，则是文本的结束位置
+      let textEnd = html.indexOf('<'); // 如果返回结果是0，说明是个标签【开始标签或者结束标签】
+
+      if (textEnd === 0) {
+        // 说明是个标签
+        const startTagMatch = parseStartTag();
+        if (startTagMatch) {
+          start(startTagMatch.tagName, startTagMatch.attrs);
+          continue;
+        }
+        let endTagMatch = html.match(endTag);
+        if (endTagMatch) {
+          end(endTagMatch.tagName);
+          advance(endTagMatch[0].length);
+          continue;
+        }
+      }
+      if (textEnd > 0) {
+        let text = html.substring(0, textEnd);
+        if (text) {
+          chars(text);
+          advance(text.length);
+        }
+      }
+    }
+    return root;
+  }
+
+  const defaultTagRE = /\{\{((?:.|\r?\n)+?)\}\}/g; // 默认模板语法  表达式变量
+
+  function gen(node) {
+    if (node.type === 1) {
+      //return `_c('${node.tag}',${node.attrs.length > 0 ? genAttrs(node.attrs) : 'null'}${node.children.length > 0 ? `,${genChildren(node.children)}` : ''})`
+      return codegen(node);
+    } else if (node.type === 3) {
+      let text = node.text;
+      if (defaultTagRE.test(text)) {
+        // text = text.replace(defaultTagRE, (match, exp) => {
+        //   return `_s(${exp})`
+        // })
+        let tokens = [];
+        let match;
+        defaultTagRE.lastIndex = 0; // 重置exec的校验位置，exec的lastIndex会向后移动
+        let lastIndex = 0;
+        while (match = defaultTagRE.exec(text)) {
+          let index = match.index;
+          if (index > lastIndex) {
+            tokens.push(JSON.stringify(text.slice(lastIndex, index)));
+          }
+          tokens.push(`_s(${match[1].trim()})`);
+          lastIndex = index + match[0].length;
+        }
+        if (lastIndex < text.length) {
+          tokens.push(JSON.stringify(text.slice(lastIndex)));
+        }
+        text = tokens.join('+');
+      }
+      return `_v(${JSON.stringify(text)})`;
+    }
+  }
+  function genChildren(children) {
+    return children.map(child => gen(child)).join(',');
+  }
+  function genAttrs(attrs) {
+    let str = '';
+    for (let i = 0; i < attrs.length; i++) {
+      const attr = attrs[i];
+      if (attr.name === 'style') {
+        // 属性名是style的时候，需要处理多个属性为对象格式
+        let obj = {};
+        attr.value.split(';').forEach(item => {
+          let [key, value] = item.split(':');
+          obj[key] = value;
+        });
+        attr.value = obj;
+      }
+      str += `${attr.name}:${JSON.stringify(attr.value)},`;
+    }
+    return `{${str.slice(0, -1)}}`;
+  }
+  function codegen(ast) {
+    `_c('${ast.tag}',${ast.attrs.length > 0 ? genAttrs(ast.attrs) : 'null'}${ast.children.length > 0 ? `,${genChildren(ast.children)}` : ''})`;
+  }
+  function compileToFunction(template) {
+    // const { code } = compile(template);
+    // const render = new Function("Vue", code)(Vue);
+
+    //1. 生成AST语法树
+    let ast = parseHTML(template);
+
+    //2. 生成render函数 【执行返回的结果就是虚拟dom】
+
+    codegen(ast);
+    // _c('div',{id:'app'},_c('div',{style:{color:'red'}},_v(_s(name)+_s(age))))
+
+    //3. 将render函数返回
+    return render;
+  }
+
   // 重写数组中的某些方法
   let oldArrayProto = Array.prototype;
 
@@ -124,6 +321,28 @@
 
       // 初始化状态
       initState(vm);
+      if (options.el) {
+        vm.$mount(options.el);
+      }
+    };
+    Vue.prototype.$mount = function (el) {
+      const vm = this;
+      const options = vm.$options;
+      el = document.querySelector(el);
+
+      // 判断是否有模板语法
+      if (!options.render) {
+        // 先查找是否有render
+        let template = options.template;
+        if (!template && el) {
+          template = el.outerHTML;
+        }
+        if (template) {
+          const render = compileToFunction(template);
+          options.render = render;
+        }
+      }
+      options.render;
     };
   }
 
