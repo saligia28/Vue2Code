@@ -51,7 +51,7 @@ export function parseHTML(html) {
 
   // 处理文本
   function chars(text) { // 直接放入当前currentParent的children
-    text = text.replace(/\s/g, '') // 去除空格 不做细节处理
+    text = text.replace(/\s/g, ' ') // 去除空格 不做细节处理
     currentParent.children.push({
       type: TEXT_TYPE,
       text,

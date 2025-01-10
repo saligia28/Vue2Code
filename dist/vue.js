@@ -53,7 +53,7 @@
     // 处理文本
     function chars(text) {
       // 直接放入当前currentParent的children
-      text = text.replace(/\s/g, ''); // 去除空格 不做细节处理
+      text = text.replace(/\s/g, ' '); // 去除空格 不做细节处理
       currentParent.children.push({
         type: TEXT_TYPE,
         text,
@@ -132,16 +132,18 @@
 
   const defaultTagRE = /\{\{((?:.|\r?\n)+?)\}\}/g; // 默认模板语法  表达式变量
 
-  function gen(node) {
-    if (node.type === 1) {
-      //return `_c('${node.tag}',${node.attrs.length > 0 ? genAttrs(node.attrs) : 'null'}${node.children.length > 0 ? `,${genChildren(node.children)}` : ''})`
-      return codegen(node);
-    } else if (node.type === 3) {
-      let text = node.text;
+  // 处理每一个子节点
+  function gen(child) {
+    if (child.type === 1) {
+      //return `_c('${child.tag}',${child.attrs.length > 0 ? genAttrs(child.attrs) : 'null'}${child.children.length > 0 ? `,${genChildren(child.children)}` : ''})`
+      return codegen(child);
+    } else if (child.type === 3) {
+      let text = child.text;
       if (defaultTagRE.test(text)) {
         // text = text.replace(defaultTagRE, (match, exp) => {
         //   return `_s(${exp})`
         // })
+
         let tokens = [];
         let match;
         defaultTagRE.lastIndex = 0; // 重置exec的校验位置，exec的lastIndex会向后移动
@@ -157,23 +159,28 @@
         if (lastIndex < text.length) {
           tokens.push(JSON.stringify(text.slice(lastIndex)));
         }
-        text = tokens.join('+');
+        text = tokens.join("+");
+        return `_v(${text})`;
+      } else {
+        text = JSON.stringify(text);
+        return `_v(${text})`;
       }
-      return `_v(${JSON.stringify(text)})`;
     }
   }
   function genChildren(children) {
-    return children.map(child => gen(child)).join(',');
+    return children.map(child => gen(child)).join(",");
   }
+
+  // 处理当前节点的属性值
   function genAttrs(attrs) {
-    let str = '';
+    let str = "";
     for (let i = 0; i < attrs.length; i++) {
       const attr = attrs[i];
-      if (attr.name === 'style') {
+      if (attr.name === "style") {
         // 属性名是style的时候，需要处理多个属性为对象格式
         let obj = {};
-        attr.value.split(';').forEach(item => {
-          let [key, value] = item.split(':');
+        attr.value.split(";").forEach(item => {
+          let [key, value] = item.split(":");
           obj[key] = value;
         });
         attr.value = obj;
@@ -183,7 +190,9 @@
     return `{${str.slice(0, -1)}}`;
   }
   function codegen(ast) {
-    `_c('${ast.tag}',${ast.attrs.length > 0 ? genAttrs(ast.attrs) : 'null'}${ast.children.length > 0 ? `,${genChildren(ast.children)}` : ''})`;
+    let code = `_c('${ast.tag}',${ast.attrs.length > 0 ? genAttrs(ast.attrs) : "null"}${ast.children.length > 0 ? `,${genChildren(ast.children)}` : ""})`;
+    console.log("code", code);
+    return code;
   }
   function compileToFunction(template) {
     // const { code } = compile(template);
@@ -194,11 +203,127 @@
 
     //2. 生成render函数 【执行返回的结果就是虚拟dom】
 
-    codegen(ast);
+    let code = codegen(ast);
+    code = `with(this){return ${code}}`;
+    let render = new Function(code);
     // _c('div',{id:'app'},_c('div',{style:{color:'red'}},_v(_s(name)+_s(age))))
 
     //3. 将render函数返回
     return render;
+  }
+
+  function createElementVNode(vm, tag, data, ...children) {
+    data = data || {}; // 避免data为null
+    let key = data.key;
+    if (key) {
+      delete data.key;
+    }
+    return vnode(vm, tag, key, data, children);
+  }
+  function createTextVNode(vm, text) {
+    return vnode(vm, undefined, undefined, undefined, undefined, text);
+  }
+  function vnode(vm, tag, key, data, children, text) {
+    return {
+      vm,
+      tag,
+      key,
+      data,
+      children,
+      text
+    };
+  }
+
+  /**
+   * 核心流程
+   * 1.创造了响应式数据
+   * 2.模板装换成ast语法树
+   * 3.将ast语法树转换了render函数
+   * 4.后续每次数据更新可以只执行render函数 【无需再次执行ast转化的过程】
+   */
+  function createEle(vnode) {
+    const {
+      tag,
+      children,
+      data,
+      text
+    } = vnode;
+    if (typeof tag === "string") {
+      //说明是标签
+      vnode.el = document.createElement(tag); //将真是DOM挂在到虚拟DOM上，以便后续修改
+
+      //处理节点属性
+      patchProps(vnode.el, data);
+      console.log("el", vnode.el);
+
+      // 处理虚拟DOM中的children节点
+      children.forEach(child => {
+        vnode.el.appendChild(createEle(child));
+      });
+    } else {
+      //说明是文本
+      vnode.el = document.createTextNode(text);
+    }
+    return vnode.el; //将真实DOM返回
+  }
+  function patchProps(el, props) {
+    for (let key in props) {
+      if (key === "style") {
+        for (let styleName in props.style) {
+          el.style[styleName] = props.style[styleName];
+        }
+      } else {
+        el.setAttribute(key, props[key]);
+      }
+    }
+  }
+  function patch(oldVNode, vnode) {
+    const isRealElement = oldVNode.nodeType;
+    if (isRealElement) {
+      const ele = oldVNode;
+      const parentEle = ele.parentNode;
+
+      //不能先删除老DOM，否则会插入错误，找不到原来的DOM位置
+      let newEle = createEle(vnode); // 新生成的DOM
+      parentEle.insertBefore(newEle, ele.nextSibling); //先把新生成的DOM插入到老DOM的下一个
+      parentEle.removeChild(ele); //删除老DOM
+
+      return newEle;
+    }
+  }
+  function initLifeCycle(Vue) {
+    Vue.prototype._update = function (vnode) {
+      const vm = this;
+      const el = vm.$el;
+      console.log("vnode", vnode);
+
+      // 可以初始化，也可以更新
+      vm.$el = patch(el, vnode); // 将新的DOM赋值给el
+    };
+    Vue.prototype._c = function () {
+      return createElementVNode(this, ...arguments);
+    };
+    Vue.prototype._v = function () {
+      return createTextVNode(this, ...arguments);
+    };
+    Vue.prototype._s = function (value) {
+      if (typeof value !== "object") return value;
+      return JSON.stringify(value);
+    };
+
+    // render函数会去产生虚拟节点（使用响应式数据）
+    // 根据生成的虚拟DOM创建真实DOM
+    Vue.prototype._render = function () {
+      return this.$options.render.call(this);
+    };
+  }
+  function mountComponent(vm, el) {
+    vm.$el = el;
+    //1.调用render，生成虚拟DOM
+
+    vm._update(vm._render());
+    //2.根据虚拟DOM生成真实DOM
+    //3.插入到el元素中
   }
 
   // 重写数组中的某些方法
@@ -337,14 +462,16 @@
         if (!template && el) {
           template = el.outerHTML;
         }
-        if (template) {
+        if (template && el) {
           const render = compileToFunction(template);
           options.render = render;
         }
       }
-      options.render;
+      mountComponent(vm, el); //组件的挂载
     };
   }
+
+  // runtime 是不包含模板编译的，整个编译是打包的时候同构loader来转义.vue文件的，用runtime的时候不能使用template【Vue实例上】
 
   function Vue(options) {
     // options就是用户的选项
@@ -352,6 +479,7 @@
     this._init(options);
   }
   initMixin(Vue);
+  initLifeCycle(Vue);
 
   return Vue;
 
