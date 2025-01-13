@@ -30,9 +30,14 @@
 					nArr: [1, 2],
 				};
 			},
-			el:'#app' // 要将数据 解析到el元素上
+			el: '#app' // 要将数据 解析到el元素上
 		});
 
+		vm.$mount('#app');
+
+		setTimeout(() => {
+			vm.name = 'new name'
+		}, 1000)
 		// 将数据处理成响应式 initState
 
 		// 1.模板引擎  性能差 需要正则匹配替换  1.0的时候没有引入虚拟dom概念

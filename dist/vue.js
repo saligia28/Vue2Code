@@ -212,6 +212,60 @@
     return render;
   }
 
+  let id$1 = 0;
+  class Dep {
+    //属性的dep要收集watcher
+    constructor() {
+      this.id = id$1++;
+      this.subs = [];
+    }
+    depend() {
+      // 收集依赖，去掉重复收集的watcher；同时也需要让watcher去依赖dep
+      // this.subs.push(Dep.target)
+
+      Dep.target.addDep(this);
+    }
+    addSub(watcher) {
+      this.subs.push(watcher);
+    }
+    notify() {
+      this.subs.forEach(watcher => watcher.update()); // 通知更新
+    }
+  }
+  Dep.target = null; // 全局静态变量
+
+  let id = 0; // 做唯一标识
+
+  // 观察者模式
+  class Watcher {
+    //不同组件有不同的watcher
+    constructor(vm, fn, option) {
+      this.id = id++;
+      this.renderWatcher = option; //是否是渲染watcher
+      this.getter = fn;
+      this.deps = []; // 后续实现计算属性，和一些清理工作需要用到
+      this.depIds = new Set();
+      this.get();
+    }
+    get() {
+      Dep.target = this; // 静态属性，只有这一个
+      this.getter(); // 触发取值操作
+      Dep.target = null;
+    }
+    addDep(dep) {
+      let id = dep.id;
+      if (!this.depIds.has(id)) {
+        // 去重收集dep
+        this.deps.push(dep);
+        this.depIds.add(id);
+        dep.addSub(this);
+      }
+    }
+    update() {
+      this.get(); // 触发更新，渲染试图
+    }
+  }
+
   function createElementVNode(vm, tag, data, ...children) {
     data = data || {}; // 避免data为null
     let key = data.key;
@@ -248,13 +302,13 @@
       data,
       text
     } = vnode;
-    if (typeof tag === "string") {
+    if (typeof tag === 'string') {
       //说明是标签
       vnode.el = document.createElement(tag); //将真是DOM挂在到虚拟DOM上，以便后续修改
 
       //处理节点属性
       patchProps(vnode.el, data);
-      console.log("el", vnode.el);
+      console.log('el', vnode.el);
 
       // 处理虚拟DOM中的children节点
       children.forEach(child => {
@@ -268,7 +322,7 @@
   }
   function patchProps(el, props) {
     for (let key in props) {
-      if (key === "style") {
+      if (key === 'style') {
         for (let styleName in props.style) {
           el.style[styleName] = props.style[styleName];
         }
@@ -295,7 +349,7 @@
     Vue.prototype._update = function (vnode) {
       const vm = this;
       const el = vm.$el;
-      console.log("vnode", vnode);
+      console.log('vnode', vnode);
 
       // 可以初始化，也可以更新
       vm.$el = patch(el, vnode); // 将新的DOM赋值给el
@@ -307,7 +361,7 @@
       return createTextVNode(this, ...arguments);
     };
     Vue.prototype._s = function (value) {
-      if (typeof value !== "object") return value;
+      if (typeof value !== 'object') return value;
       return JSON.stringify(value);
     };
 
@@ -321,7 +375,13 @@
     vm.$el = el;
     //1.调用render，生成虚拟DOM
 
-    vm._update(vm._render());
+    const updateComponent = () => {
+      vm._update(vm._render());
+    };
+    const watcher = new Watcher(vm, updateComponent, true); // 最后一个参数标识是否为渲染watcher
+    console.log('watcher', watcher);
+
+    // vm._update(vm._render());
     //2.根据虚拟DOM生成真实DOM
     //3.插入到el元素中
   }
@@ -356,7 +416,7 @@
   class Observe {
     constructor(data) {
       // 将自定义属性'__ob__'设置成不可枚举，否则在递归劫持过程会死循环
-      Object.defineProperty(data, "__ob__", {
+      Object.defineProperty(data, '__ob__', {
         value: this,
         enumerable: false
       });
@@ -382,20 +442,25 @@
   function defineReactive(target, key, value) {
     // 如果属性是队形，递归监听
     observe(value);
+    let dep = new Dep();
     Object.defineProperty(target, key, {
       get() {
+        if (Dep.target) {
+          dep.depend(); // 收集这个属性的watcher
+        }
         return value;
       },
       set(newValue) {
         if (value === newValue) return;
         observe(value); // 如果赋的值是个对象，也需要做深层监听处理
         value = newValue;
+        dep.notify(); // 通知更新
       }
     });
   }
   function observe(data) {
     // 只对对象进行劫持
-    if (typeof data !== "object" || data === null) {
+    if (typeof data !== 'object' || data === null) {
       return;
     }
 
